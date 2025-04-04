@@ -30,29 +30,30 @@ if __name__ == "__main__":
                                 transforms.PILToTensor()
     ]))
 
-    data = []
-    labels = []
-    count =0 
+    data_tensor = torch.empty((len(cap), 3, 256, 256))
+    labels_tensor = torch.zeros((len(cap), 5, 512))
+    count = 0
+    MAX_LABELS = 5
 
     for img, target in cap:
+        img = img.to(device)
         embs = []
-        for text in target:
+        for text in target[:MAX_LABELS]:
             inputs = tokenizer(text, return_tensors="pt")
             with torch.no_grad():
                 outputs = model.encoder(**inputs)
                 embeddings = outputs.last_hidden_state
                 sentence_embedding = embeddings.mean(dim=1) 
-                embs.append(sentence_embedding)
-        if len(embs) > 5:
-            embs = embs[:5]
-        data.append(img)
-        labels.append(torch.stack(embs))
+                embs.append(sentence_embedding.squeeze(0))
+        for j, emb in enumerate(embs):
+        labels_tensor[count, j] = emb.cpu()
+
+        data_tensor[count] = img.cpu()
         if count % 1000 == 0:
             print(count)
         count += 1
 
 
-    dataset = MyDataset(torch.stack(data), torch.stack(labels))
-
+    dataset = MyDataset(data_tensor, labels_tensor)
     checkpoint = {'dataset': dataset}
-    torch.save(checkpoint, 'dataset_checkpoint.pth')
+    torch.save(checkpoint, '/u/kli44/DitVAE/dataset_checkpoint.pth')

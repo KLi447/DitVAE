@@ -35,7 +35,7 @@ class Decoder(nn.Module):
         
     def get_loss(self, emb, x):
         x_hat = self.forward(emb)
-        l = nn.MSELoss(reduction="sum")
+        l = nn.MSELoss(reduction="mean")
         loss = l(x_hat, x)
         return loss
     
