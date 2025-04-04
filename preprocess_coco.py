@@ -46,7 +46,7 @@ if __name__ == "__main__":
                 sentence_embedding = embeddings.mean(dim=1) 
                 embs.append(sentence_embedding.squeeze(0))
         for j, emb in enumerate(embs):
-        labels_tensor[count, j] = emb.cpu()
+            labels_tensor[count, j] = emb.cpu()
 
         data_tensor[count] = img.cpu()
         if count % 1000 == 0:
