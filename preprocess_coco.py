@@ -66,4 +66,4 @@ if __name__ == "__main__":
 
     dataset = MyDataset(data_tensor, labels_tensor)
     checkpoint = {'dataset': dataset}
-    torch.save(checkpoint, '/projects/beis/kli44/DitVAE/train30k_clip_dataset_checkpoint.pth')
+    torch.save(checkpoint, '/projects/beis/kli44/DitVAE/data/train30k_clip_dataset_checkpoint.pth')

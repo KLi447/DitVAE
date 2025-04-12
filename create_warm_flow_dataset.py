@@ -71,4 +71,4 @@ if __name__ == "__main__":
 
     dataset = MyDataset(coco_img_tensor, decoder_img_tensor)
     checkpoint = {'dataset': dataset}
-    torch.save(checkpoint, '/projects/beis/kli44/DitVAE/img_and_decoded_5k.pth')
+    torch.save(checkpoint, '/projects/beis/kli44/DitVAE/data/img_and_decoded_5k.pth')

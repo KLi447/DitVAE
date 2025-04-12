@@ -25,7 +25,7 @@ if __name__ == "__main__":
     vae_final_fn = 'models/decoderv4_t2_1000.pt'
     vae_ckpt_fn = vae_final_fn + 'h'
 
-    loaded_checkpoint = torch.load('train30k_clip_dataset_checkpoint.pth', weights_only=False)
+    loaded_checkpoint = torch.load('data/train30k_clip_dataset_checkpoint.pth', weights_only=False)
     ld = loaded_checkpoint['dataset']
 
     batch_size = 64
