@@ -67,6 +67,8 @@ class Decoder(nn.Module):
         samples = samples.to(device)
         x_hat = self.forward(samples)
 
+        return x_hat
+
         x_hat = (x_hat * 255).clamp(0, 255).byte()
         grid = vutils.make_grid(x_hat, nrow=4, padding=2)
         img = grid.permute(1, 2, 0).cpu().numpy()

@@ -2,6 +2,7 @@ data/
 temp*
 .DS_Store
 __pycache__
-*.pth
 *.pt
+*.pth
+*.png
 samples/

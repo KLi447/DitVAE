@@ -1,10 +1,9 @@
 import torch
+from models.models_old import Decoder
+import torchvision.transforms as transforms
 import clip
 from torchvision import datasets as dset
 from torch.utils.data import Dataset
-import os
-from torchvision import transforms
-from PIL import Image
 
 class MyDataset(Dataset):
     def __init__(self, data, labels):
@@ -31,39 +30,45 @@ if __name__ == "__main__":
     clip_model, clip_preprocess = clip.load("ViT-B/32", device=device)
     clip_model.eval()
 
-    cap = dset.CocoCaptions(root = './data/coco/images/train2017',
-                            annFile = './data/coco/annotations/captions_train2017.json',
+    cap = dset.CocoCaptions(root = './data/coco/images/val2017',
+                            annFile = './data/coco/annotations/captions_val2017.json',
                             transform=transforms.Compose([
                                 transforms.Resize((256, 256)), 
                                 transforms.ToTensor()
     ]))
 
-    MAX_SAMPLES = 30000
-    data_tensor = torch.empty((MAX_SAMPLES, 3, 256, 256), dtype=torch.float32)
-    labels_tensor = torch.zeros((MAX_SAMPLES, 5, 512), dtype=torch.float32)
+    d_model = Decoder(512, 1024)
+    state_dict = torch.load('./decoderv3_1000.pt', weights_only=True)
+    d_model.load_state_dict(state_dict)
+    d_model = torch.compile(d_model)
+    d_model.to(device)
+    d_model.eval()
+
+    MAX_SAMPLES = 5000
     count = 0
-    MAX_LABELS = 5
+
+    coco_img_tensor = torch.empty((MAX_SAMPLES, 3, 256, 256), dtype=torch.float32)
+    decoder_img_tensor = torch.empty((MAX_SAMPLES, 3, 256, 256), dtype=torch.float32)
 
     for img, captions in cap:
         if count == MAX_SAMPLES:
             break
-        img = img.to(device)
-        embs = []
-        for text in captions[:MAX_LABELS]:
-            tokens = clip.tokenize([text]).to(device)
-            with torch.no_grad():
-                embedding = clip_model.encode_text(tokens)
-            embs.append(embedding)
-        
-        for j, emb in enumerate(embs):
-            labels_tensor[count, j] = emb.cpu()
+        # use first caption for easy
+        text = captions[0]
+        tokens = clip.tokenize([text]).to(device)
+        with torch.no_grad():
+            embedding = clip_model.encode_text(tokens)
 
-        data_tensor[count] = img.cpu()
+        embedding = embedding.to(torch.float32)
+        with torch.no_grad():
+            decoded = d_model.sample(embedding, device=device)
+
+        coco_img_tensor[count] = img
+        decoder_img_tensor[count] = decoded.cpu()
         if count % 1000 == 0:
             print(count)
         count += 1
 
-
-    dataset = MyDataset(data_tensor, labels_tensor)
+    dataset = MyDataset(coco_img_tensor, decoder_img_tensor)
     checkpoint = {'dataset': dataset}
-    torch.save(checkpoint, '/projects/beis/kli44/DitVAE/train30k_clip_dataset_checkpoint.pth')
+    torch.save(checkpoint, '/projects/beis/kli44/DitVAE/img_and_decoded_5k.pth')
