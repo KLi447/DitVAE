@@ -11,6 +11,8 @@ from PIL import Image
 import os
 from models.models import Decoder
 from preprocess_coco import MyDataset
+from torch.optim.lr_scheduler import SequentialLR, LinearLR, CosineAnnealingLR
+from torchvision.utils import save_image
 
 if __name__ == "__main__":
     if torch.backends.mps.is_available() and torch.backends.mps.is_built():
@@ -22,7 +24,7 @@ if __name__ == "__main__":
     
     print(f"Using device: {device}")
     
-    vae_final_fn = 'models/decoderv4_t2_1000.pt'
+    vae_final_fn = 'models/temp.pt'
     vae_ckpt_fn = vae_final_fn + 'h'
 
     loaded_checkpoint = torch.load('data/train30k_clip_dataset_checkpoint.pth', weights_only=False)
@@ -33,9 +35,15 @@ if __name__ == "__main__":
 
     train_loader = DataLoader(ld, batch_size=batch_size, shuffle=True)
     decoder = Decoder(input_dim=512, hidden_dim=1024).to(device)
-    optimizer = optim.Adam(decoder.parameters(), lr=1e-4)
+    optimizer = optim.Adam(decoder.parameters(), lr=1e-5)
     criterion = nn.MSELoss()
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=n_epochs)
+    warmup_epochs = 20
+    warmup_scheduler = LinearLR(optimizer, start_factor=1e-4, total_iters=warmup_epochs)
+
+    cosine_epochs = n_epochs - warmup_epochs
+    cosine_scheduler = CosineAnnealingLR(optimizer, T_max=cosine_epochs)
+
+    scheduler = SequentialLR(optimizer, schedulers=[warmup_scheduler, cosine_scheduler], milestones=[warmup_epochs])
 
     start_epoch = 0
     if os.path.exists(vae_ckpt_fn):
@@ -53,7 +61,7 @@ if __name__ == "__main__":
     for epoch in range(start_epoch, n_epochs):
         
         epoch_loss = 0
-
+        count = 0
         for imgs, captions in tqdm(train_loader):
             imgs = imgs.float() / 255.0  # Scale images from [0, 255] to [0, 1]
             imgs = imgs.to(device)
@@ -78,6 +86,21 @@ if __name__ == "__main__":
         scheduler.step()
 
         print(f"Epoch {epoch+1}/{n_epochs}, Loss: {epoch_loss:.8f}")
+
+        decoder.eval()
+        with torch.no_grad():
+            sample_imgs, sample_captions = next(iter(train_loader))
+
+            sample_captions = sample_captions.to(device)
+            B_s, N_s, D_s = sample_captions.shape
+
+            sample_captions_flat = sample_captions.view(B_s * N_s, D_s)
+            sample_preds = decoder(sample_captions_flat)
+            sample_filename = f"./samples/sample_epoch_{epoch+1}.png"
+            os.makedirs("./samples", exist_ok=True)
+            save_image(sample_preds, sample_filename, nrow=N_s)
+            print(f"Sample output saved to {sample_filename}")
+        decoder.train()
 
         if (epoch + 1) % 5 == 0:
             latest_checkpoint = {
