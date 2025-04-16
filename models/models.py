@@ -5,10 +5,11 @@ import os
 from PIL import Image
 
 class Decoder(nn.Module):
-    def __init__(self, input_dim, hidden_dim):
+    def __init__(self, input_dim, hidden_dim, gamma=0.1):
         super().__init__()
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
+        self.gamma = gamma
         self.float()
         
         #should be 512, 1024
@@ -55,6 +56,9 @@ class Decoder(nn.Module):
     
     def forward(self, z):
         batch_size = z.shape[0]
+        # adding noise to inputs 
+        gamma = 0.05
+        z = z + self.gamma * torch.randn_like(z)
         z = self.fc(z)
         z = z.view(batch_size, 1024, 4, 4)
         return self.decoder(z)

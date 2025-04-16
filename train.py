@@ -2,7 +2,7 @@
 import torch
 import clip
 from torch import nn, optim
-from torch.utils.data import DataLoader
+from torch.utils.data import Subset, DataLoader
 from torchvision import datasets, transforms
 from torchvision.datasets import CocoCaptions
 from tqdm.auto import tqdm
@@ -24,18 +24,24 @@ if __name__ == "__main__":
     
     print(f"Using device: {device}")
     
-    vae_final_fn = 'models/temp.pt'
+    vae_final_fn = 'models/decoder.pt'
     vae_ckpt_fn = vae_final_fn + 'h'
 
-    loaded_checkpoint = torch.load('data/train30k_clip_dataset_checkpoint.pth', weights_only=False)
-    ld = loaded_checkpoint['dataset']
+    train_checkpoint = torch.load('data/train30k_0_1_clip_dataset_checkpoint.pth', weights_only=False)
+    train_data = train_checkpoint['dataset']
+
+    val_checkpoint = torch.load('data/val5k_0_1_clip_dataset_checkpoint.pth', weights_only=False)
+    val_dataset = val_checkpoint['dataset']
+    # choose subset of 1000 to run validation
+    val_subset = Subset(val_dataset, indices=list(range(1000)))
 
     batch_size = 64
     n_epochs = 1000
 
-    train_loader = DataLoader(ld, batch_size=batch_size, shuffle=True)
-    decoder = Decoder(input_dim=512, hidden_dim=1024).to(device)
-    optimizer = optim.Adam(decoder.parameters(), lr=1e-5)
+    train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(val_subset, batch_size=batch_size, shuffle=False)
+    decoder = Decoder(input_dim=512, hidden_dim=1024, gamma=0.05).to(device)
+    optimizer = optim.Adam(decoder.parameters(), lr=1e-4)
     criterion = nn.MSELoss()
     warmup_epochs = 20
     warmup_scheduler = LinearLR(optimizer, start_factor=1e-4, total_iters=warmup_epochs)
@@ -57,13 +63,18 @@ if __name__ == "__main__":
     else:
         print("No checkpoint found. Starting training from scratch.")
 
+    best_val_loss = float('inf')
+    patience = 10
+    epochs_no_improve = 0
+
     decoder.train()
     for epoch in range(start_epoch, n_epochs):
         
         epoch_loss = 0
         count = 0
         for imgs, captions in tqdm(train_loader):
-            imgs = imgs.float() / 255.0  # Scale images from [0, 255] to [0, 1]
+            # images should be scaled already in preprocess_coco.py
+            # unless noted otherwise
             imgs = imgs.to(device)
 
             captions = captions.to(device)
@@ -88,18 +99,59 @@ if __name__ == "__main__":
         print(f"Epoch {epoch+1}/{n_epochs}, Loss: {epoch_loss:.8f}")
 
         decoder.eval()
+        val_loss = 0.0
+        val_batches = 0
         with torch.no_grad():
-            sample_imgs, sample_captions = next(iter(train_loader))
+            for imgs, captions in val_loader:
+                imgs = imgs.to(device)
+                captions = captions.to(device)
+                B, N, D = captions.shape
 
-            sample_captions = sample_captions.to(device)
-            B_s, N_s, D_s = sample_captions.shape
+                captions_flat = captions.view(B * N, D)
+                preds = decoder(captions_flat)
+                imgs_repeated = imgs.unsqueeze(1).expand(B, N, *imgs.shape[1:]).reshape(B * N, *imgs.shape[1:])
+                loss = criterion(preds, imgs_repeated)
+                val_loss += loss.item()
+                val_batches += 1
 
-            sample_captions_flat = sample_captions.view(B_s * N_s, D_s)
-            sample_preds = decoder(sample_captions_flat)
-            sample_filename = f"./samples/sample_epoch_{epoch+1}.png"
-            os.makedirs("./samples", exist_ok=True)
-            save_image(sample_preds, sample_filename, nrow=N_s)
-            print(f"Sample output saved to {sample_filename}")
+        avg_val_loss = val_loss / val_batches
+        print(f"Epoch {epoch+1}/{n_epochs} Validation Loss: {avg_val_loss:.8f}")
+
+        if avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
+            epochs_no_improve = 0
+            best_checkpoint = {
+                'epoch': epoch + 1,
+                'decoder_state_dict': decoder.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict(),
+                'val_loss': best_val_loss
+            }
+            torch.save(best_checkpoint, vae_final_fn)
+            print(f"Best model updated and saved as {vae_final_fn}")
+        else:
+            epochs_no_improve += 1
+            print(f"No improvement in validation loss for {epochs_no_improve} epoch(s).")
+
+        if epochs_no_improve >= patience:
+            print(f"Early stopping triggered. No improvement in validation loss for {patience} consecutive epochs.")
+            break
+
+        if (epoch + 1) % 25 == 0:
+            decoder.eval()
+            with torch.no_grad():
+                sample_imgs, sample_captions = next(iter(train_loader))
+
+                sample_captions = sample_captions.to(device)
+                B_s, N_s, D_s = sample_captions.shape
+
+                sample_captions_flat = sample_captions.view(B_s * N_s, D_s)
+                sample_preds = decoder(sample_captions_flat)
+                sample_filename = f"./samples/sample_epoch_{epoch+1}.png"
+                os.makedirs("./samples", exist_ok=True)
+                save_image(sample_preds, sample_filename, nrow=N_s)
+                print(f"Sample output saved to {sample_filename}")
+        
         decoder.train()
 
         if (epoch + 1) % 5 == 0:

@@ -47,7 +47,6 @@ if __name__ == "__main__":
     for img, captions in cap:
         if count == MAX_SAMPLES:
             break
-        img = img.to(device)
         embs = []
         for text in captions[:MAX_LABELS]:
             tokens = clip.tokenize([text]).to(device)
@@ -58,7 +57,7 @@ if __name__ == "__main__":
         for j, emb in enumerate(embs):
             labels_tensor[count, j] = emb.cpu()
 
-        data_tensor[count] = img.cpu()
+        data_tensor[count] = img
         if count % 1000 == 0:
             print(count)
         count += 1
