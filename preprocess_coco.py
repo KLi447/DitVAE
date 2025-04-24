@@ -1,68 +1,65 @@
+import h5py
 import torch
 import clip
-from torchvision import datasets as dset
-from torch.utils.data import Dataset
-import os
-from torchvision import transforms
-from PIL import Image
-
-class MyDataset(Dataset):
-    def __init__(self, data, labels):
-        self.data = data
-        self.labels = labels
-        assert(len(data) == len(labels))
-
-    def __len__(self):
-        return len(self.data)
-
-    def __getitem__(self, idx):
-        return (self.data[idx].float(), self.labels[idx].float())
+from torchvision import datasets as dset, transforms
+from tqdm.auto import tqdm
+import numpy as np
 
 if __name__ == "__main__":
-    if torch.backends.mps.is_available() and torch.backends.mps.is_built():
-        device = torch.device("mps")
-    elif torch.cuda.is_available() and torch.backends.cuda.is_built():
-        device = torch.device("cuda")
-    else:
-        device = torch.device("cpu")
-    
-    print(f"Using device: {device}")
-
-    clip_model, clip_preprocess = clip.load("ViT-B/32", device=device)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    clip_model, _ = clip.load("ViT-B/32", device=device)
     clip_model.eval()
+    for p in clip_model.parameters(): p.requires_grad_(False)
 
-    cap = dset.CocoCaptions(root = './data/coco/images/train2017',
-                            annFile = './data/coco/annotations/captions_train2017.json',
-                            transform=transforms.Compose([
-                                transforms.Resize((256, 256)), 
-                                transforms.ToTensor()
-    ]))
+    coco = dset.CocoCaptions(
+        root    = "./data/coco/images/train2017",
+        annFile = "./data/coco/annotations/captions_train2017.json",
+        transform=transforms.Compose([
+            transforms.Resize((256,256)),
+            transforms.ToTensor(),
+        ])
+    )
 
-    MAX_SAMPLES = 30000
-    data_tensor = torch.empty((MAX_SAMPLES, 3, 256, 256), dtype=torch.float32)
-    labels_tensor = torch.zeros((MAX_SAMPLES, 5, 512), dtype=torch.float32)
-    count = 0
+    N = len(coco)
     MAX_LABELS = 5
+    H, W = 256, 256
+    TOKEN_LEN = 77 
 
-    for img, captions in cap:
-        if count == MAX_SAMPLES:
-            break
-        embs = []
-        for text in captions[:MAX_LABELS]:
-            tokens = clip.tokenize([text]).to(device)
-            with torch.no_grad():
-                embedding = clip_model.encode_text(tokens)
-            embs.append(embedding)
-        
-        for j, emb in enumerate(embs):
-            labels_tensor[count, j] = emb.cpu()
+    with h5py.File("coco_clip.h5", "w") as f:
+        img_ds = f.create_dataset(
+            "images",
+            shape=(N, 3, H, W),
+            dtype="f4",
+            chunks=(1,3,H,W),
+        )
+        emb_ds = f.create_dataset(
+            "clip_embs",
+            shape=(N, MAX_LABELS, 512),
+            dtype="f4",
+            chunks=(1,MAX_LABELS,512),
+        )
+        tok_ds    = f.create_dataset(
+            "clip_tokens",
+            shape=(N, MAX_LABELS, TOKEN_LEN),
+            dtype="i8",
+            chunks=(1,MAX_LABELS,TOKEN_LEN),
+        )
 
-        data_tensor[count] = img
-        if count % 1000 == 0:
-            print(count)
-        count += 1
+        for idx, (img, captions) in enumerate(tqdm(coco, total=N)):
+            img_ds[idx, ...] = img.numpy()
 
+            embs   = np.zeros((MAX_LABELS, 512), dtype="f4")
+            toks   = np.zeros((MAX_LABELS, TOKEN_LEN), dtype="i8")
 
-    dataset = MyDataset(data_tensor, labels_tensor)
-    checkpoint = {'dataset': dataset}
-    torch.save(checkpoint, '/projects/beis/kli44/DitVAE/data/train30k_clip_dataset_checkpoint.pth')
+            for j, text in enumerate(captions[:MAX_LABELS]):
+                tok = clip.tokenize([text]).to(device)
+                with torch.no_grad():
+                    emb = clip_model.encode_text(tok)
+                embs[j] = emb.cpu().numpy().reshape(512,)
+                toks[j] = tok.cpu().numpy().reshape(TOKEN_LEN,)
+
+            emb_ds[idx, ...] = embs
+            tok_ds[idx, ...] = toks
+
+            if idx % 1000 == 0:
+                f.flush()
